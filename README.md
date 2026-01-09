@@ -118,13 +118,10 @@ python evaluate_fid.py --dataset=imagenet --img_size=64 --channel_size=3\
 
 # BibTeX
 ```bibtex
-@article{zhai2024tarflow,
-         title={Normalizing Flows are Capable Generative Models},
-         author={Shuangfei Zhai and Ruixiang Zhang and Preetum Nakkiran and David Berthelot and Jiatao Gu and Huangjie Zheng and Tianrong Chen and Miguel Angel Bautista and Navdeep Jaitly and Josh Susskind},
-         year={2024},
-         eprint={2412.06329},
-         archivePrefix={arXiv},
-         primaryClass={cs.CV},
-         url={https://arxiv.org/abs/2412.06329}
+@article{lu2025bidirectional,
+  title={Bidirectional Normalizing Flow: From Data to Noise and Back},
+  author={Lu, Yiyang and Sun, Qiao and Wang, Xianbang and Jiang, Zhicheng and Zhao, Hanhong and He, Kaiming},
+  journal={arXiv preprint arXiv:2512.10953},
+  year={2025}
 }
 ```
