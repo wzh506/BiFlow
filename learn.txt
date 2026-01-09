@@ -1,0 +1,46 @@
+
+
+1.计算存储初始数据分布
+torchrun --standalone --nproc_per_node=4 prepare_fid_stats.py --dataset=afhq --img_size=256 
+
+python prepare_fid_stats.py --dataset=afhq --img_size=64
+2.训练的代码
+torchrun --standalone --nproc_per_node=4 train.py --dataset=afhq --img_size=256 --channel_size=3\
+  --patch_size=8 --channels=768 --blocks=8 --layers_per_block=8\
+  --noise_std=0.07 --batch_size=4 --epochs=4000 --lr=1e-4 --nvp --cfg=0 --drop_label=0.1\
+  --sample_freq=200 --logdir=runs/afhq256
+
+
+python train.py --dataset=afhq --img_size=256 --channel_size=3\
+  --patch_size=8 --channels=768 --blocks=8 --layers_per_block=8\
+  --noise_std=0.07 --batch_size=4 --epochs=4000 --lr=1e-4 --nvp --cfg=0 --drop_label=0.1\
+  --sample_freq=200 --logdir=runs/afhq256
+
+
+torchrun --standalone --nproc_per_node=8 train.py --dataset=imagenet64 --img_size=64 --channel_size=3\
+  --patch_size=2 --channels=768 --blocks=8 --layers_per_block=8\
+  --noise_type=uniform --batch_size=256 --epochs=100 --lr=1e-4 --nvp\
+  --sample_freq=1000 --logdir=runs/imagenet64-uncond-bpd
+
+python train.py --dataset=imagenet64 --img_size=64 --channel_size=3\
+  --patch_size=2 --channels=768 --blocks=8 --layers_per_block=8\
+  --noise_std=0.05 --batch_size=32 --epochs=200 --lr=1e-4 --nvp\
+  --sample_freq=5 --logdir=runs/imagenet64-uncond
+
+
+3. 采样的代码
+jupyter notebook sample.ipynb
+
+python evaluate_bpd.py --dataset=imagenet64 --img_size=64 --channel_size=3\
+  --patch_size=2 --channels=768 --blocks=8 --layers_per_block=8\
+  --ckpt_file=runs/imagenet64-uncond-bpd/imagenet64_model_2_768_8_8_uniform.pth
+
+# Conditional ImageNet64, samples saved in runs/imagenet64-cond/eval
+python evaluate_fid.py --dataset=imagenet --img_size=64 --channel_size=3\
+  --patch_size=2 --channels=768 --blocks=8 --layers_per_block=8\
+  --noise_std=0.05 --cfg=2.3 --nvp --batch_size=32\
+  --ckpt_file=runs/imagenet64-cond/imagenet_model_2_768_8_8_0.05.pth\
+  --logdir=runs/imagenet64-cond/eval
+
+
+

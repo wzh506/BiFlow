@@ -1,6 +1,6 @@
-# Normalizing Flows are Capable Generative Models
+# Bidirectional Normalizing Flow: From Data to Noise and Back
 
-This repo contains code that accompanies the research paper, [Normalizing Flows are Capable Generative Models](http://arxiv.org/abs/2412.06329).
+This repo contains code that accompanies the research paper, [Bidirectional Normalizing Flow: From Data to Noise and Back](https://arxiv.org/abs/2512.10953).
 
 ![Teaser image](guided_samples.jpeg) 
 

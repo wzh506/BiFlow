@@ -16,6 +16,7 @@ import math
 import os
 import pathlib
 import random
+from typing import Dict, Union
 
 import numpy as np
 import torch
@@ -24,6 +25,8 @@ import torch.utils.data
 import torchvision as tv
 from torchmetrics.image.fid import FrechetInceptionDistance
 
+import torch.distributed as dist
+import datetime
 
 class CosineLRSchedule(torch.nn.Module):
     counter: torch.Tensor
@@ -59,15 +62,35 @@ class CosineLRSchedule(torch.nn.Module):
 class Distributed:
 
     def __init__(self):
-        if os.environ.get('MASTER_PORT'):  # When running with torchrun
-            self.rank = int(os.environ['RANK'])
-            self.local_rank = int(os.environ['LOCAL_RANK'])
-            self.world_size = int(os.environ['WORLD_SIZE'])
-            self.distributed = True
-            torch.distributed.init_process_group('nccl', 'env://', timeout=datetime.timedelta(minutes=10))
-        else:  # When running with python for debugging
-            self.rank, self.local_rank, self.world_size = 0, 0, 1
-            self.distributed = False
+        self.distributed = False
+        self.rank = 0
+        self.local_rank = 0
+        self.world_size = 1
+
+        if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+            self.rank = int(os.environ["RANK"])
+            self.world_size = int(os.environ["WORLD_SIZE"])
+            self.local_rank = int(os.environ.get("LOCAL_RANK", 0))
+            self.distributed = self.world_size > 1
+
+        if self.distributed:
+            torch.cuda.set_device(self.local_rank)
+            dist.init_process_group(
+                backend="nccl",
+                init_method="env://",
+                timeout=datetime.timedelta(minutes=10),
+            )
+
+        # 原来这样写很容易报错，已经注释掉
+        # if os.environ.get('MASTER_PORT'):  # When running with torchrun， 但是单卡单机也有可能有MASTER_PORT
+        #     print(f'Failed to initialize distributed mode: {e}, try to run in non-distributed mode')
+        #     self.rank = 0
+        #     self.local_rank = 0
+        #     self.world_size = 1
+        #     self.distributed = False
+        # else:  # When running with python for debugging
+        #     self.rank, self.local_rank, self.world_size = 0, 0, 1
+        #     self.distributed = False
         torch.cuda.set_device(self.local_rank)
         self.barrier()
 
@@ -96,7 +119,7 @@ class Metrics:
     def __init__(self):
         self.metrics: dict[str, list[float]] = {}
 
-    def update(self, metrics: dict[str, torch.Tensor | float]):
+    def update(self, metrics: dict[str, Union[torch.Tensor, float]]):
         for k, v in metrics.items():
             if isinstance(v, torch.Tensor):
                 v = v.item()
@@ -104,8 +127,8 @@ class Metrics:
                 self.metrics[k].append(v)
             else:
                 self.metrics[k] = [v]
-
-    def compute(self, dist: Distributed | None) -> dict[str, float]:
+# Union[Distributed, None]
+    def compute(self, dist: Union[Distributed, None]) -> dict[str, float]:
         out: dict[str, float] = {}
         for k, v in self.metrics.items():
             v = sum(v) / len(v)

@@ -16,8 +16,8 @@ def main(args):
     data, _ = utils.get_data(args.dataset, args.img_size, args.data)
 
     fid_stats_file = args.data / f'{args.dataset}_{args.img_size}_fid_stats.pth'
-    assert not fid_stats_file.exists()
-    fid = utils.FID(reset_real_features=False, normalize=True).cuda()
+    assert not fid_stats_file.exists() , f'FID stats file "{fid_stats_file}" already exists.'
+    fid = utils.FID(reset_real_features=False, normalize=True).cuda() #计算函数的指标，是一个模型InceptionV3
     dist.barrier()
 
     data_sampler = torch.utils.data.DistributedSampler(
@@ -28,12 +28,17 @@ def main(args):
     )
 
     for x, _ in data_loader:
-        x = x.cuda()
-        fid.update(dist.gather_concat(0.5 * (x + 1)), real=True)
-
+        x = x.cuda() #看看数据的维度和形状,总数据只有936个，大小是[-0.5,0.5]
+        fid.update(dist.gather_concat(0.5 * (x + 1)), real=True) #如果是多卡，所有GPU汇聚
+    # update完成的任务：
     if dist.local_rank == 0:
         torch.save(fid.state_dict(), fid_stats_file)
         print(f'Saved FID stats file {fid_stats_file}')
+        # for k, v in fid.state_dict().items():
+        #     print(k,v, v.shape, v.dtype, v.device)
+        print(f'fid.real_features_num_samples is {fid.real_features_num_samples}')   # 真实样本数量
+        print(fid.real_features_sum.shape)     # 特征和的形状,特征维度是2048
+        print(fid.real_features_cov_sum.shape) # 协方差相关的二阶统计
     dist.barrier()
 
 

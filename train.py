@@ -14,6 +14,7 @@ import torchvision as tv
 
 import transformer_flow
 import utils
+from tqdm import tqdm
 
 
 def main(args):
@@ -98,8 +99,8 @@ def main(args):
     def compute_loss(x, y):
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=enable_amp):
             z, outputs, logdets = model_ddp(x, y)
-            loss = model.get_loss(z, logdets)
-            return loss, (z, outputs, logdets)
+            loss = model.get_loss(z, logdets) #z是解码加噪后的潜在变量,logdets是行列式的log(为啥这两个loss?)
+            return loss, (z, outputs, logdets) #score-based denosing只在采样/评估时使用
 
     if args.compile:
         compute_loss = torch.compile(compute_loss, fullgraph=False, backend='inductor', mode='max-autotune')
@@ -108,16 +109,16 @@ def main(args):
     print(f'{" Training ":-^80}')
     for epoch in range(args.epochs):
         metrics = utils.Metrics()
-        for x, y in data_loader:
+        for x, y in tqdm(data_loader, desc=f"Training epoch {epoch+1}/{args.epochs}"):
             x = x.cuda()
             if args.noise_type == 'gaussian':
-                eps = args.noise_std * torch.randn_like(x)
+                eps = args.noise_std * torch.randn_like(x) # 2.4.Noise Augmented Training
                 x = x + eps
             elif args.noise_type == 'uniform':
                 x_int = (x + 1) * (255 / 2)
                 x = (x_int + torch.rand_like(x_int)) / 256
                 x = x * 2 - 1
-            if num_classes:
+            if num_classes: # 2.6. Guidance
                 y = y.cuda()
                 mask = (torch.rand(y.size(0), device='cuda') < args.drop_label).int()
                 # we use -1 to denote dropped classes

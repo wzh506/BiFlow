@@ -1,0 +1,11 @@
+
+
+
+*.pth
+/runs
+/data*
+/__pycache__
+download.py 
+.ossutil_checkpoint
+xp_run.sh
+
