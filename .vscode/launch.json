@@ -42,5 +42,21 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },
+        {
+            "name": "Single Train BiFlow",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/train_biflow.py",
+            "args": [
+                "--dataset=afhq",
+                "--data=data",
+                "--img_size=256",
+                "--batch_size=4",
+                "--teacher_ckpt=runs/notebook/afhq_model_8_768_8_8_0.07.pth",
+                "--logdir=runs/biflow_afhq"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
     ]
 }

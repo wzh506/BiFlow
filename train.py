@@ -12,6 +12,7 @@ import torch.utils
 import torch.utils.data
 import torchvision as tv
 
+import biflow
 import transformer_flow
 import utils
 from tqdm import tqdm
@@ -57,17 +58,29 @@ def main(args):
         pin_memory=True,
         drop_last=True,
     )
+    if args.model == 'tarflow':
+        model = transformer_flow.Model(
+            in_channels=args.channel_size,
+            img_size=args.img_size,
+            patch_size=args.patch_size,
+            channels=args.channels,
+            num_blocks=args.blocks,
+            layers_per_block=args.layers_per_block,
+            nvp=args.nvp,
+            num_classes=num_classes,
+        ).to('cuda')
+    else:
+        model = biflow.Model(
+            in_channels=args.channel_size,
+            img_size=args.img_size,
+            patch_size=args.patch_size,
+            channels=args.channels,
+            num_blocks=args.blocks,
+            layers_per_block=args.layers_per_block,
+            nvp=args.nvp,
+            num_classes=num_classes,
+        ).to('cuda')
 
-    model = transformer_flow.Model(
-        in_channels=args.channel_size,
-        img_size=args.img_size,
-        patch_size=args.patch_size,
-        channels=args.channels,
-        num_blocks=args.blocks,
-        layers_per_block=args.layers_per_block,
-        nvp=args.nvp,
-        num_classes=num_classes,
-    ).to('cuda')
     optimizer = torch.optim.AdamW(model.parameters(), betas=(0.9, 0.95), lr=args.lr, weight_decay=1e-4)
     lr_schedule = utils.CosineLRSchedule(optimizer, len(data_loader), args.epochs * len(data_loader), 1e-6, args.lr)
     scaler = torch.amp.GradScaler()
@@ -89,9 +102,9 @@ def main(args):
         model_name = f'{args.patch_size}_{args.channels}_{args.blocks}_{args.layers_per_block}_{args.noise_std:.2f}'
     else:
         model_name = f'{args.patch_size}_{args.channels}_{args.blocks}_{args.layers_per_block}_uniform'
-    sample_dir: pathlib.Path = args.logdir / f'{args.dataset}_samples_{model_name}'
-    model_ckpt_file = args.logdir / f'{args.dataset}_model_{model_name}.pth'
-    opt_ckpt_file = args.logdir / f'{args.dataset}_opt_{model_name}.pth'
+    sample_dir: pathlib.Path = args.logdir / f'{args.model}_{args.dataset}_samples_{model_name}'
+    model_ckpt_file = args.logdir / f'{args.model}_{args.dataset}_model_{model_name}.pth'
+    opt_ckpt_file = args.logdir / f'{args.model}_{args.dataset}_opt_{model_name}.pth'
     if dist.local_rank == 0:
         sample_dir.mkdir(parents=True, exist_ok=True)
 
@@ -176,6 +189,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', default='imagenet', choices=['imagenet', 'imagenet64', 'afhq'], help='Name of dataset')
     parser.add_argument('--img_size', default=64, type=int, help='Image size')
     parser.add_argument('--channel_size', default=3, type=int, help='Image channel size')
+    parser.add_argument('--model', default='tarflow', choices=['tarflow', 'biflow'], help='Choice of model architecture')
 
     parser.add_argument('--patch_size', default=4, type=int, help='Patch size for the model')
     parser.add_argument('--channels', default=512, type=int, help='Model width')
@@ -184,6 +198,7 @@ if __name__ == '__main__':
     parser.add_argument('--noise_std', default=0.05, type=float, help='Input noise standard deviation')
     parser.add_argument('--noise_type', default='gaussian', choices=['gaussian', 'uniform'], type=str)
     parser.add_argument('--cfg', default=0, type=float, help='Guidance weight for sampling, 0 is no guidance')
+    
 
     parser.add_argument('--batch_size', default=128, type=int, help='Training batch size across all devices')
     parser.add_argument('--epochs', default=100, type=int, help='Training epochs')
