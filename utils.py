@@ -156,7 +156,7 @@ def get_data(dataset: str, img_size: int, folder: pathlib.Path) -> tuple[torch.u
             tv.transforms.ToTensor(),
             tv.transforms.Normalize((0.5,), (0.5,)),
         ]
-    )
+    )#图片被归一化了！
     if dataset == 'imagenet64':
         data = tv.datasets.ImageFolder(str(folder / 'imagenet64'), transform=transform)
     elif dataset == 'imagenet':

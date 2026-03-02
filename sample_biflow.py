@@ -50,7 +50,7 @@ print('checkpoint loaded!')
 
 # now let's generate samples
 guided_samples = {}
-with torch.no_grad(): #搞明白模型的输入和输出是什么
+with torch.no_grad(): #搞明白模型的输入和输出是什么，这个实在测试集上做测试
     for guidance in [0, 1]:
         with torch.autocast(device_type=device, dtype=torch.bfloat16):
             samples = model.reverse(fixed_noise, fixed_y, guidance,sample_dir=sample_dir)

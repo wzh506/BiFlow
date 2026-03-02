@@ -372,7 +372,7 @@ class StudentBlock(torch.nn.Module):
     
 
 class BiFlow(torch.nn.Module):
-    def __init__(self, teacher_model: TarFlowModel):
+    def __init__(self, teacher_model: TarFlowModel,args,num_classes: int = 0):
         super().__init__()
         self.teacher = teacher_model
         # 冻结 Teacher 参数
@@ -381,6 +381,7 @@ class BiFlow(torch.nn.Module):
         self.teacher.eval() # 确保 Teacher 处于 Eval 模式 (Dropout/BatchNorm 等)
 
         # 读取 Teacher 配置
+        self.num_patches = teacher_model.num_patches
         self.patch_size = teacher_model.patch_size
         self.img_size = teacher_model.img_size
         # 获取输入维度 (patch_size^2 * channels)
@@ -399,8 +400,21 @@ class BiFlow(torch.nn.Module):
         num_blocks = len(teacher_model.blocks)
         head_dim = 64 # 根据 samply.py 推断或显式指定
         
+        # self.student_blocks = torch.nn.ModuleList([
+        #     StudentBlockV2(self.hidden_dim, head_dim=head_dim, expansion=4) 
+        #     for _ in range(num_blocks)
+        # ])
         self.student_blocks = torch.nn.ModuleList([
-            StudentBlock(self.hidden_dim, head_dim=head_dim, expansion=4) 
+            StudentBlockV2(
+                in_channels=self.hidden_dim,   # 进入 block 的维度就是 hidden_dim
+                channels=self.hidden_dim,      # 内部通道也设成 hidden_dim，和 Teacher 对齐
+                num_patches=self.num_patches,  # 和 Teacher 相同的 patch 数
+                num_layers=1,
+                head_dim=head_dim,
+                expansion=4,
+                nvp=True,      # 如果你想保持仿射结构，可继续用 True；只当纯 Transformer 用 False
+                num_classes=num_classes, # 如果不做条件生成就保持 0
+            )
             for _ in range(num_blocks)
         ])
         
@@ -411,37 +425,45 @@ class BiFlow(torch.nn.Module):
         ])
         
         # 4. Denoising Block (额外的去噪层)
-        self.denoise_block = StudentBlock(self.hidden_dim, head_dim=head_dim, expansion=4)
+        if args.use_denoise_block:
+            # self.denoise_block = torch.nn.Linear(self.hidden_dim, self.in_channels)
+            self.denoise_block = torch.nn.Linear(self.in_channels, self.in_channels)
+        else:
+            self.denoise_block = torch.nn.Identity()
         
         # 5. Output Projection (hidden -> x)
         self.student_proj_out = torch.nn.Linear(self.hidden_dim, self.in_channels)
         
         # 损失函数权重
-        self.align_weight = 1.0 
+        self.align_weight = 1.0
 
-    def forward(self, x: torch.Tensor, y: torch.Tensor = None):
+    def forward(self, x: torch.Tensor, y: torch.Tensor = None, x_nonoise: torch.Tensor = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         # --- 1. Teacher Forward (Ground Truth 轨迹) ---
         with torch.no_grad():
             x_patched = self.teacher.patchify(x)
             # Teacher 需要返回中间 outputs。
             # 修改说明：需要确保 transformer_flow.Model.forward 返回 [z, outputs, logdets]
             z, teacher_outputs, _ = self.teacher(x, y) 
-        
+            # z是最终反向的噪声
         # --- 2. Student Reverse (学习逆轨迹) ---
         h = self.student_proj_in(z) + self.student_pos_embed
         
         student_states = []
         for block in self.student_blocks:
-            h = block(h)
+            h = block(h,y) #加入引导信息
             student_states.append(h)
-            
-        # Denoising 同时降噪回来
-        h_final = self.denoise_block(h)
-        x_recon = self.student_proj_out(h_final)
+    
+        # 先Proj，再降噪
+        h_final = self.student_proj_out(h) # 为啥维度变了？感觉有问题，下面又强行降回来了
+        x_recon = self.denoise_block(h_final) #对应denoising的block
         
         # --- 3. Loss 计算 ---
         # A. Reconstruction Loss
-        loss_recon = torch.nn.functional.mse_loss(x_recon, x_patched)
+        # 如何做：denoise前后都要监督，同时最后一层要改为高斯的形式
+        x_clean_patched = self.teacher.patchify(x_nonoise)
+        loss_recon1 = torch.nn.functional.mse_loss(h_final, x_clean_patched)
+        loss_recon2 = torch.nn.functional.mse_loss(x_recon, x_clean_patched)
+
         
         # B. Hidden Alignment Loss
         loss_align = 0
@@ -450,18 +472,19 @@ class BiFlow(torch.nn.Module):
         # 对应关系：Student Layer i 应该对齐 Teacher Layer (N-1-i)
         # 注意：teacher_outputs 通常包含每一层的输出。
         
-        target_states = teacher_outputs[::-1] 
+        target_states = teacher_outputs[::-1][::-1]  #不要最后一个是x，这里取反了,主要是因为teacher_outputs的顺序是从输入到输出，而student是从输出到输入，所以要反过来对齐
         
-        for i in range(len(self.student_blocks)):
+        for i in range(min(len(self.student_blocks), len(target_states))):
             h_stu = student_states[i]
-            if i < len(target_states):
+            if i < len(target_states):#
                 h_tea = target_states[i]
-                h_stu_proj = self.proj_heads[i](h_stu) #论文中的连接层
+                h_stu_proj = self.proj_heads[i](h_stu) #论文中的连接层,这里一定要注意监督顺序（原来就监督反了。。。)
                 loss_align += torch.nn.functional.mse_loss(h_stu_proj, h_tea)
-            
-        total_loss = loss_recon + self.align_weight * loss_align
+        # tv.utils.save_image(self.teacher.unpatchify(self.proj_heads[i](h))[:16], f'temp/student_samples_{i}.png', normalize=True, nrow=4)
+        # 训练集上测试发现效果还行
+        total_loss = loss_recon1 + loss_recon2 + self.align_weight * loss_align
         
-        return total_loss, x_recon, loss_recon, loss_align
+        return total_loss, x_recon, loss_recon1, loss_recon2, loss_align
 
     @torch.no_grad()
     def sample_1nfe(self, z: torch.Tensor,sample_dir: Path = None) -> torch.Tensor:
@@ -471,8 +494,99 @@ class BiFlow(torch.nn.Module):
             h = block(h)
             if sample_dir is not None:
                 tv.utils.save_image(self.teacher.unpatchify(self.proj_heads[i](h))[:16], sample_dir / f'student_samples_{i}.png', normalize=True, nrow=4)
-        h = self.denoise_block(h)
-        x_recon = self.student_proj_out(h)
+        # h = self.denoise_block(h)
+        # x_recon = self.student_proj_out(h)
+        h_final = self.student_proj_out(h) # 先搞映射，再搞去噪，感觉更合理一些（虽然现在的去噪层是线性的，感觉没什么用）
+        x_recon = self.denoise_block(h_final) #对应denoising的block
         
         return self.teacher.unpatchify(x_recon)
 # ==========================================
+
+
+class StudentBlockV2(torch.nn.Module):
+    """
+    专门给 BiFlow Student 使用的 Block。
+    结构与 MetaBlockV2 相同（全图可见 Transformer），但 forward 执行的是生成方向的变换。
+    """
+    def __init__(
+        self,
+        in_channels: int,
+        channels: int,
+        num_patches: int,
+        num_layers: int = 1,
+        head_dim: int = 64,
+        expansion: int = 4,
+        nvp: bool = True,
+        num_classes: int = 0,
+    ):
+        super().__init__()
+        # 1. 基础网络结构 (和 Teacher 保持一致)
+        self.proj_in = torch.nn.Linear(in_channels, channels)
+        self.pos_embed = torch.nn.Parameter(torch.randn(num_patches, channels) * 1e-2)
+        
+        if num_classes:
+            self.class_embed = torch.nn.Parameter(torch.randn(num_classes, 1, channels) * 1e-2)
+        else:
+            self.class_embed = None
+            
+        # 这里的 Attention 也是全图可见的 (attn_mask=None)
+        self.attn_blocks = torch.nn.ModuleList(
+            [AttentionBlock(channels, head_dim, expansion) for _ in range(num_layers)]
+        )
+        
+        self.nvp = nvp
+        output_dim = in_channels * 2 if nvp else in_channels
+        self.proj_out = torch.nn.Linear(channels, output_dim)
+        
+        # --- 核心技巧：零初始化 ---
+        # 确保初始状态下 mu=0, log_sigma=0 -> sigma=1
+        # 这样一开始整个网络就是恒等映射 (Identity)，极大利于深层网络训练
+        self.proj_out.weight.data.zero_()
+        self.proj_out.bias.data.zero_()
+
+    def forward(self, x: torch.Tensor, y: Union[torch.Tensor, None] = None) -> torch.Tensor:
+        """
+        Student 的 forward 实际上是在执行 Generative Process (Noise -> Data)
+        公式：z_{next} = z_{curr} * sigma + mu
+        """
+        x_in = x # 保存输入状态 (z_curr)
+        
+        # --- 1. 计算变换参数 (Context Encoding) ---
+        x = self.proj_in(x) + self.pos_embed
+        if self.class_embed is not None:
+            if y is not None:
+                 # 处理 drop label
+                if (y < 0).any():
+                    m = (y < 0).float().view(-1, 1, 1)
+                    class_embed = (1 - m) * self.class_embed[y] + m * self.class_embed.mean(dim=0)
+                else:
+                    class_embed = self.class_embed[y]
+                x = x + class_embed
+            else:
+                x = x + self.class_embed.mean(dim=0)
+
+        # 全图 Attention
+        for block in self.attn_blocks:
+            x = block(x, attn_mask=None) 
+            
+        # 预测参数
+        params = self.proj_out(x)
+        
+        # --- 2. 仿射变换 (Affine Transformation) ---
+        if self.nvp:
+            # xa 是 log_scale (控制缩放), xb 是 shift (控制平移)
+            xa, xb = params.chunk(2, dim=-1)
+        else:
+            xb = params
+            xa = torch.zeros_like(params)
+
+        # [关键区别]
+        # Teacher: (x - xb) * exp(-xa)  [减法 + 除法]
+        # Student: x * exp(xa) + xb     [乘法 + 加法]
+        
+        # 这里的 xa 我们直接视为 log_sigma
+        # 初始时 xa=0 -> sigma=1; xb=0 -> shift=0
+        sigma = xa.float().exp().type(xa.dtype)  # sigma = exp(log_sigma)
+        
+        # 执行变换
+        return x_in * sigma + xb

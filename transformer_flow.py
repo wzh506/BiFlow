@@ -310,7 +310,7 @@ class Model(torch.nn.Module):
             x, logdet = block(x, y)
             logdets = logdets + logdet
             outputs.append(x)
-        return x, outputs, logdets
+        return x, outputs, logdets #注意，这里输出outputs不包含x0(输入数据)
 
     def update_prior(self, z: torch.Tensor):
         z2 = (z**2).mean(dim=0)

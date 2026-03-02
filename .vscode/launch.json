@@ -53,7 +53,9 @@
                 "--img_size=256",
                 "--batch_size=4",
                 "--teacher_ckpt=runs/notebook/afhq_model_8_768_8_8_0.07.pth",
-                "--logdir=runs/biflow_afhq"
+                "--logdir=runs/biflow_afhq_0301",
+                "--drop_label=0.1",
+                "--resume"
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
