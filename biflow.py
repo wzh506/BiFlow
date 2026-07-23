@@ -472,7 +472,7 @@ class BiFlow(torch.nn.Module):
         # 对应关系：Student Layer i 应该对齐 Teacher Layer (N-1-i)
         # 注意：teacher_outputs 通常包含每一层的输出。
         
-        target_states = teacher_outputs[::-1][::-1]  #不要最后一个是x，这里取反了,主要是因为teacher_outputs的顺序是从输入到输出，而student是从输出到输入，所以要反过来对齐
+        target_states = teacher_outputs[::-1]  #不要最后一个是x，这里取反了,主要是因为teacher_outputs的顺序是从输入到输出，而student是从输出到输入，所以要反过来对齐；这里一次即可
         
         for i in range(min(len(self.student_blocks), len(target_states))):
             h_stu = student_states[i]

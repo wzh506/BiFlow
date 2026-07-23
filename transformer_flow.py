@@ -249,7 +249,7 @@ class MetaBlock(torch.nn.Module):
             scale = za[:, 0].float().exp().type(za.dtype)  # get rid of the sequence dimension
             x[:, i + 1] = x[:, i + 1] * scale + zb[:, 0] #为x[:, i + 1]赋值(应为这次用的是x<(i+1)生成的)
         self.set_sample_mode(False)
-        return self.permutation(x, inverse=True)
+        return self.permutation(x, inverse=True), -za.mean(dim=[1, 2])
 
 
 class Model(torch.nn.Module):
@@ -317,7 +317,7 @@ class Model(torch.nn.Module):
         self.var.lerp_(z2.detach(), weight=self.VAR_LR)
         # self.var = (1 - VAR_LR) * self.var + VAR_LR * z2_detached, 目前的VAR
     def get_loss(self, z: torch.Tensor, logdets: torch.Tensor):
-        return 0.5 * z.pow(2).mean() - logdets.mean() #最小化这个函数即可
+        return 0.5 * z.pow(2).mean() - logdets.mean() #最小化这个函数即可,这个loss太抽象了
 
     def reverse( #这是这类模型的特色，会附带一个reverse函数
         self,
@@ -333,8 +333,10 @@ class Model(torch.nn.Module):
         (sample_dir / f'temp_{guidance}').mkdir(parents=True, exist_ok=True)
         seq = [self.unpatchify(x)]
         x = x * self.var.sqrt() # 用目前的self.var进行缩放,因为训练时有实时更新var.不过肉眼看不出来
+        logdets = torch.zeros(x.shape[0], device=x.device)
         for block in reversed(self.blocks):
-            x = block.reverse(x, y, guidance, guide_what, attn_temp, annealed_guidance) #guidance就是y label
+            x, logdet = block.reverse(x, y, guidance, guide_what, attn_temp, annealed_guidance) #guidance就是y label
+            logdets += logdet
             seq.append(self.unpatchify(x))
         x = self.unpatchify(x)
         for i, img in enumerate(seq):
@@ -346,3 +348,12 @@ class Model(torch.nn.Module):
             return seq
 # tv.utils.save_image(self.unpatchify(x), sample_dir/'temp' / f'noise.png', normalize=True, nrow=4)
 # tv.utils.save_image(self.unpatchify(x), sample_dir / f'noise.png', normalize=True, nrow=4)
+if __name__ == "__main__":
+    model = Model(3, 32, 8, 384, 2, 2, nvp=False, num_classes=10)
+    x = torch.randn(4, 3, 32, 32)
+    y = torch.tensor([0, 1, 2, 3])
+    z, _, logdets = model(x, y)
+    print(model.get_loss(z, logdets))
+    sample_dir = Path("./samples")
+    x = model.reverse(z, y, guidance=0.5, guide_what='ab', attn_temp=1.0, annealed_guidance=False, return_sequence=False, sample_dir=sample_dir)
+    print("Done")
